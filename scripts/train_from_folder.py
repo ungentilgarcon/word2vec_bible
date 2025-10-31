@@ -110,6 +110,9 @@ def main():
     p.add_argument('--no-per-song-graphs', action='store_true', help='If set, do NOT produce per-song graph CSVs (by default per-song graphs are generated)')
     p.add_argument('--embedding', choices=['word2vec','fasttext','glove'], default='word2vec', help='Embedding backend to use: word2vec (default), fasttext (train FastText), or glove (load pre-trained GloVe)')
     p.add_argument('--glove-path', default=None, help='Path to pre-trained GloVe txt file (required when --embedding glove)')
+    p.add_argument('--max-nodes', type=int, default=None, help='Limit output to the top N nodes selected by connectivity or frequency')
+    p.add_argument('--similar-topn', type=int, default=10, help='Number of top similar neighbors to inspect when computing connectivity (default: 10)')
+    p.add_argument('--select-by', choices=['connectivity','freq'], default='connectivity', help='When --max-nodes is used choose selection method: connectivity (default) or freq')
     args = p.parse_args()
 
     files = [os.path.join(args.folder, f) for f in os.listdir(args.folder) if f.lower().endswith('.csv')]
@@ -222,7 +225,44 @@ def main():
     # Support models that are KeyedVectors (glove) or full models with .wv
     wv = model.wv if hasattr(model, 'wv') else model
     raw_vocab = list(wv.index_to_key)
-    vocab = [t for t in raw_vocab if len(t) >= args.min_token_length and re.search(r'[A-Za-zÀ-ÖØ-öø-ÿ]', t) and t not in stopwords_set]
+    # Initial filtering by token length/regex/stopwords
+    vocab_full = [t for t in raw_vocab if len(t) >= args.min_token_length and re.search(r'[A-Za-zÀ-ÖØ-öø-ÿ]', t) and t not in stopwords_set]
+
+    # If requested, select the top-N tokens either by connectivity or by frequency.
+    if args.max_nodes and args.max_nodes > 0:
+        # helper to get token counts (fallback to corpus counts if model doesn't provide)
+        def token_count(tok):
+            try:
+                return int(wv.get_vecattr(tok, 'count'))
+            except Exception:
+                return sum(1 for doc in docs if tok in doc)
+
+        if args.select_by == 'freq':
+            print(f'Selecting top {args.max_nodes} tokens by frequency')
+            sorted_tokens = sorted(vocab_full, key=lambda t: token_count(t), reverse=True)
+            vocab = sorted_tokens[:args.max_nodes]
+        else:
+            # connectivity-based selection
+            print(f'Selecting top {args.max_nodes} tokens by connectivity (inspecting top {args.similar_topn} neighbors each)')
+            conn = {}
+            # Precompute a set for fast membership checks
+            vocab_set = set(vocab_full)
+            for token in vocab_full:
+                try:
+                    sims = wv.most_similar(token, topn=args.similar_topn)
+                except Exception:
+                    conn[token] = 0
+                    continue
+                # count how many of the returned neighbors are in our filtered vocab
+                c = sum(1 for t, _ in sims if t in vocab_set)
+                conn[token] = c
+
+            # sort tokens by connectivity (descending) then by corpus frequency fallback
+            sorted_tokens = sorted(vocab_full, key=lambda t: (conn.get(t, 0), token_count(t)), reverse=True)
+            vocab = sorted_tokens[:args.max_nodes]
+    else:
+        vocab = vocab_full
+
     id_map = {token: idx + 1 for idx, token in enumerate(vocab)}
 
     out_file = args.out if args.out.lower().endswith('.csv') else args.out + '.csv'

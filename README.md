@@ -88,3 +88,54 @@ Next steps I can take for you
 - Improve heading detection by using `python-docx` paragraph style names (strongly recommended if your files are well-structured Word docs).
 
 If you'd like, I can implement the `run_all.sh` config flag now and/or add paragraph-style-based splitting.
+
+New command-line options (added in this fork)
+------------------------------------------------
+
+This fork adds a few additional options to `scripts/train_from_folder.py` to let you control the embedding backend and the node-selection strategy used when exporting Topogram CSVs.
+
+- `--embedding {word2vec,fasttext,glove}` — choose which embedding backend to use.
+	- `word2vec` (default) trains a gensim Word2Vec model on the prepared per-file CSVs.
+	- `fasttext` trains a gensim FastText model (subword-aware).
+	- `glove` loads pre-trained GloVe vectors; you must pass `--glove-path /path/to/glove.txt`.
+
+- `--glove-path <path>` — path to a pre-trained GloVe text file (required if `--embedding glove`). The script converts GloVe to word2vec format and loads it as KeyedVectors.
+
+- `--max-nodes N` — limit the number of output nodes to the top N tokens. Useful to reduce graph size.
+
+- `--select-by {connectivity,freq}` — when `--max-nodes` is set, choose how to select the top N tokens:
+	- `connectivity` (default) — for each candidate token the script inspects its top-K similar neighbors (via `most_similar`) and ranks tokens by how many neighbors are present in the corpus; ties are broken by token frequency.
+	- `freq` — selects the top N tokens by frequency (fast; uses model counts if available or falls back to corpus counts).
+
+- `--similar-topn K` — how many neighbors to request from `most_similar` when computing connectivity (default: 10). Lower values are faster.
+
+Examples
+--------
+
+1) Train with default Word2Vec and produce the combined Topogram CSV (no node limit):
+
+```bash
+python3 bible_word2vec/scripts/train_from_folder.py --folder data/Bible_CSV --out data/Bible_CSV/bible_topogram.csv
+```
+
+2) Train with FastText and limit output to the top 500 most connected tokens (connectivity selection):
+
+```bash
+python3 bible_word2vec/scripts/train_from_folder.py \
+	--folder data/Bible_CSV --out data/Bible_CSV/bible_topogram_fasttext_top500.csv \
+	--embedding fasttext --max-nodes 500 --select-by connectivity --similar-topn 10
+```
+
+3) Use pre-trained GloVe vectors (no training) and limit nodes by frequency:
+
+```bash
+python3 bible_word2vec/scripts/train_from_folder.py \
+	--folder data/Bible_CSV --out data/Bible_CSV/bible_topogram_glove.csv \
+	--embedding glove --glove-path /path/to/glove.6B.100d.txt --max-nodes 300 --select-by freq
+```
+
+Notes
+-----
+
+- Connectivity-based selection requires many `most_similar` calls (one per candidate token) and may be slow for very large vocabularies or large models. Use `--select-by freq` or reduce `--similar-topn` when you need speed.
+- If you run with `--embedding glove` and the pre-trained file lacks token counts, the script falls back to counting occurrences in your corpus for frequency tie-breaks.
