@@ -24,6 +24,9 @@ import unicodedata
 
 import requests
 from gensim.models import Word2Vec
+from gensim.models import FastText
+from gensim.models.keyedvectors import KeyedVectors
+from gensim.scripts.glove2word2vec import glove2word2vec
 from rapidfuzz import fuzz
 
 
@@ -105,6 +108,8 @@ def main():
     p.add_argument('--light-edges', dest='light_edges', action='store_true', default=True, help='Write minimal edge metadata by default')
     p.add_argument('--no-light-edges', dest='light_edges', action='store_false', help='Disable light edges and include textual edge fields')
     p.add_argument('--no-per-song-graphs', action='store_true', help='If set, do NOT produce per-song graph CSVs (by default per-song graphs are generated)')
+    p.add_argument('--embedding', choices=['word2vec','fasttext','glove'], default='word2vec', help='Embedding backend to use: word2vec (default), fasttext (train FastText), or glove (load pre-trained GloVe)')
+    p.add_argument('--glove-path', default=None, help='Path to pre-trained GloVe txt file (required when --embedding glove)')
     args = p.parse_args()
 
     files = [os.path.join(args.folder, f) for f in os.listdir(args.folder) if f.lower().endswith('.csv')]
@@ -190,9 +195,33 @@ def main():
     size = 100
     window = 5
     min_count = max(1, args.min_count)
-    model = Word2Vec(sentences=docs, vector_size=size, window=window, min_count=min_count, workers=2, epochs=10)
+    # Choose embedding backend: word2vec (default), fasttext (gensim FastText), or glove (pretrained file)
+    emb = (args.embedding or 'word2vec').lower()
+    model = None
+    if emb == 'fasttext':
+        # Train FastText (subword-aware)
+        model = FastText(sentences=docs, vector_size=size, window=window, min_count=min_count, workers=2, epochs=10)
+    elif emb == 'glove':
+        # Expect a pre-trained GloVe text file path to be provided
+        if not args.glove_path:
+            print('Embedding "glove" selected but --glove-path was not provided; aborting')
+            return
+        # Convert GloVe to word2vec format in a temp file and load KeyedVectors
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w+', delete=False) as tmpf:
+            tmp_path = tmpf.name
+        try:
+            glove2word2vec(args.glove_path, tmp_path)
+            model = KeyedVectors.load_word2vec_format(tmp_path, binary=False)
+        except Exception as e:
+            print('Failed to load GloVe vectors from', args.glove_path, e)
+            return
+    else:
+        model = Word2Vec(sentences=docs, vector_size=size, window=window, min_count=min_count, workers=2, epochs=10)
 
-    raw_vocab = list(model.wv.index_to_key)
+    # Support models that are KeyedVectors (glove) or full models with .wv
+    wv = model.wv if hasattr(model, 'wv') else model
+    raw_vocab = list(wv.index_to_key)
     vocab = [t for t in raw_vocab if len(t) >= args.min_token_length and re.search(r'[A-Za-zÀ-ÖØ-öø-ÿ]', t) and t not in stopwords_set]
     id_map = {token: idx + 1 for idx, token in enumerate(vocab)}
 
@@ -212,7 +241,8 @@ def main():
             start = years[0] if years else ''
             end = years[-1] if years else ''
             try:
-                count = model.wv.get_vecattr(token, 'count')
+                # Not all backends expose token counts (e.g., preloaded KeyedVectors). Fall back to corpus counts.
+                count = wv.get_vecattr(token, 'count')
             except Exception:
                 count = sum(1 for doc in docs if token in doc)
             name = token
@@ -240,7 +270,7 @@ def main():
 
         for token in vocab:
             try:
-                sims = model.wv.most_similar(token, topn=10)
+                sims = wv.most_similar(token, topn=10)
             except Exception:
                 continue
             src = id_map[token]
@@ -306,7 +336,7 @@ def main():
 
                 toks = tokenize(s.get('lyrics',''))
                 toks = [t for t in toks if len(t) >= args.min_token_length and re.search(r'[A-Za-zÀ-ÖØ-öø-ÿ]', t) and t not in stopwords_set]
-                song_nodes = [t for t in toks if t in model.wv.key_to_index]
+                song_nodes = [t for t in toks if t in (wv.key_to_index if hasattr(wv, 'key_to_index') else {})]
                 if not song_nodes:
                     continue
 
@@ -334,7 +364,7 @@ def main():
 
                     for token in song_id_map:
                         try:
-                            sims = model.wv.most_similar(token, topn=10)
+                            sims = wv.most_similar(token, topn=10)
                         except Exception:
                             continue
                         src = song_id_map[token]
