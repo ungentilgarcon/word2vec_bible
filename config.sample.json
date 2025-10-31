@@ -1,0 +1,5 @@
+{
+  "extra_stopwords": ["the", "and", "of", "unto", "shall", "ye", "thou", "thy", "thee"],
+  "token_min_length": 3,
+  "book_names": ["Genesis", "Exodus", "Leviticus", "Numbers", "Deuteronomy", "Matthew", "Mark", "Luke", "John", "Acts", "Romans", "Corinthians", "Revelation"]
+}

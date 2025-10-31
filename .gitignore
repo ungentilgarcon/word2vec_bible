@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.sqlite3
+
+# Virtualenvs and environments
+venv/
+env/
+.env
+
+# Data / outputs (adjust if you do want to commit parts of data/)
+data/
+data_*/
+*.csv
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
