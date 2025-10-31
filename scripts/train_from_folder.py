@@ -8,6 +8,14 @@ main project but inside the fork without cross-file references.
 """
 import argparse
 import csv
+import sys
+
+# CSV fields may be very large for long lyric fields; raise the field size limit if possible
+try:
+    csv.field_size_limit(sys.maxsize)
+except OverflowError:
+    # fall back to a large value
+    csv.field_size_limit(10**7)
 import os
 import re
 import time
